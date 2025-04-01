@@ -23,4 +23,27 @@ from typing import List
 
 
 def tic_tac_toe_checker(board: List[List]) -> str:
-    ...
+
+    for row in board:
+        if row[0] == '-':
+            continue
+        if row[0] == row[1] == row[2]:
+            return "Победа по строке!"
+
+    for col in range(3):
+        if board[0][col] == '-':
+            continue
+        if board[0][col] == board[1][col] == board[2][col]:
+            return "Победа по столбцу!"
+
+    if board[0][0] != '-':
+        if board[0][0] == board[1][1] == board[2][2]: return "Победа по деоганали"
+
+    if board[0][2] != '-':
+        if board[0][2] == board[1][1] == board[2][0]: return f"Победа по деоганали"
+
+    for row in board:
+        if '-' in row: return "Еще не закончили!"
+
+    return "Ничья!"
+
