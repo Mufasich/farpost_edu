@@ -3,8 +3,8 @@ from unittest.mock import Mock, patch
 from CatFactProcessor import CatFactProcessor, APIError
 
 def test_class_init():
-    web = CatFactProcessor()
-    assert web.last_content == ""
+    processor = CatFactProcessor()
+    assert processor.last_fact == ""
 
 # тест при запросе
 def test_get_content_failure():
@@ -12,4 +12,12 @@ def test_get_content_failure():
         processor = CatFactProcessor()
 
         with pytest.raises(APIError, match="Ошибка при запросе к API"):
-            processor.get_content("https://404.com")
+            processor.get_fact()
+
+
+def test_empty_analysis():
+    processor = CatFactProcessor()
+    result = processor.get_fact_analysis()
+
+    assert result["length"] == 0
+    assert result["letter_frequencies"] == {}
