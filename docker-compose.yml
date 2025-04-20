@@ -1,7 +1,6 @@
 version: '3.8'
 
 services:
-
   mysql:
     image: mysql:latest
     environment:
@@ -9,3 +8,27 @@ services:
       MYSQL_DATABASE: mydatabase
     ports:
       - "3306:3306"
+    networks:
+      - app_network
+
+  jenkins:
+    image: jenkins/jenkins:2.492.3-lts
+    privileged: true
+    user: root
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_data:/var/jenkins_home
+      - ./mysql-connector-java-8.0.33.jar:/var/jenkins_home/lib/mysql-connector-java.jar
+    environment:
+      JAVA_OPTS: "-Djenkins.install.runSetupWizard=false"
+    networks:
+      - app_network
+
+volumes:
+  jenkins_data:
+
+networks:
+  app_network:
+    driver: bridge

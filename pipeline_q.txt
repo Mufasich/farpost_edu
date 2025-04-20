@@ -1,0 +1,94 @@
+pipeline {
+    agent any
+    triggers {
+        cron('H 5 * * *')
+    }
+    environment {
+        MYSQL_HOST = 'mysql'
+        MYSQL_USER = 'root'
+        MYSQL_PASSWORD = 'root'
+        MYSQL_DATABASE = 'mydatabase'
+        START_DATE = '2025-01-01'
+        END_DATE = '2025-05-01'
+    }
+    
+    stages {
+        stage('Extract') {
+            steps {
+                script {
+                    def query = """
+                    WITH daily_stats AS (
+                        SELECT 
+                            DATE(l.action_date) AS day,
+                            SUM(CASE WHEN l.action = 'register' AND l.status = 'success' THEN 1 ELSE 0 END) AS new_accounts,
+                            SUM(CASE WHEN l.action = 'create_message' THEN 1 ELSE 0 END) AS total_messages,
+                            SUM(CASE WHEN l.action = 'create_message' AND l.user_id IS NULL THEN 1 ELSE 0 END) AS anonymous_messages,
+                            SUM(CASE WHEN l.action = 'create_theme' AND l.status = 'success' THEN 1 ELSE 0 END) AS new_themes
+                        FROM logs l
+                        WHERE DATE(l.action_date) BETWEEN '${env.START_DATE}' AND '${env.END_DATE}'
+                        GROUP BY DATE(l.action_date)
+                    ),
+                    theme_counts AS (
+                        SELECT 
+                            DATE(t.created_at) AS day,
+                            COUNT(*) AS theme_count
+                        FROM themes t
+                        WHERE DATE(t.created_at) <= '${env.END_DATE}'
+                        GROUP BY DATE(t.created_at)
+                        )
+                    SELECT * FROM daily_stats ds
+                    ORDER BY ds.day;
+                    """
+                    
+                    sh """
+                        mysql -h ${env.MYSQL_HOST} -u ${env.MYSQL_USER} -p${env.MYSQL_PASSWORD} ${env.MYSQL_DATABASE} \
+                        -e "${query.replace('\n', ' ').replace('\r', '')}" > raw_data.tsv
+                        
+                        echo "Extracted \$(wc -l < raw_data.tsv) records"
+                    """
+                }
+            }
+        }
+        
+        stage('Transform') {
+            steps {
+                script {
+                    sh '''#!/bin/bash
+                        awk -F'\\t' '
+                        NR == 1 {print "day\\tnew_accounts\\ttotal_messages\\tanonymous_messages\\tnew_themes\\tanonymous_percentage\\ttheme_growth_percentage"}
+                        NR > 1 {
+                            anonymous_pct = ($3 > 0) ? sprintf("%.2f", $4*100/$3) : "0.00";
+                            print $0 "\\t" anonymous_pct "\\t0.00"
+                        }' raw_data.tsv > transformed_data.tsv
+                        
+                        echo "Transformed $(wc -l < transformed_data.tsv) records"
+                    '''
+                }
+            }
+        }
+        
+        stage('Load') {
+            steps {
+                script {
+                    sh '''#!/bin/bash
+                        echo '"day","new_accounts","total_messages","anonymous_messages","new_themes","anonymous_percentage","theme_growth_percentage"' > analytics.csv
+                        
+                        tail -n +2 transformed_data.tsv | while IFS=$'\\t' read -r day new_acc msg_cnt anon_msg new_th anon_pct growth_pct; do
+                            echo "\\"$day\\",\\"$new_acc\\",\\"$msg_cnt\\",\\"$anon_msg\\",\\"$new_th\\",\\"$anon_pct\\",\\"$growth_pct\\"" >> analytics.csv
+                        done
+                        
+                        echo "Generated CSV with $(wc -l < analytics.csv) lines"
+                    '''
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            archiveArtifacts artifacts: 'analytics.csv', fingerprint: true
+            sh 'echo "=== Sample Data ==="; head -n 5 analytics.csv'
+            sh 'rm -f raw_data.tsv transformed_data.tsv'
+        }
+    }
+}

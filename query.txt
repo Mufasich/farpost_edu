@@ -1,0 +1,130 @@
+docker exec -it 339fa7bb51599a4887578b65aaef3bd11d1b3470249a8dc55534d8dd7b34e679 mysql -u root -p
+
+-- Создание таблиц
+CREATE TABLE users (
+    user_id INT AUTO_INCREMENT PRIMARY KEY,
+    login VARCHAR(50) NOT NULL,
+    UNIQUE KEY (login)
+) ENGINE=InnoDB;
+
+
+
+CREATE TABLE themes (
+    theme_id INT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    content TEXT,
+    user_id INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_deleted BOOLEAN DEFAULT FALSE,
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+) ENGINE=InnoDB;
+
+
+CREATE TABLE logs (
+    log_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NULL,
+    action VARCHAR(20) NOT NULL,
+    theme_id INT NULL,
+    status VARCHAR(10) NOT NULL,
+    action_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id),
+    FOREIGN KEY (theme_id) REFERENCES themes(theme_id)
+) ENGINE=InnoDB;
+
+
+INSERT INTO users (login) VALUES 
+('user1'), ('user2'), ('user3'), ('user4'), ('user5');
+
+DELIMITER //
+CREATE PROCEDURE generate_test_data()
+BEGIN
+    DECLARE i INT;
+    
+    -- Генерация 50 тестовых тем
+    SET i = 1;
+    WHILE i <= 50 DO
+        INSERT INTO themes (title, content, user_id, created_at, is_deleted)
+        VALUES (
+            CONCAT('Тема ', i),
+            CONCAT('Содержание темы ', i),
+            FLOOR(1 + RAND() * 5), -- Случайный пользователь 1-5
+            DATE_SUB(NOW(), INTERVAL FLOOR(RAND() * 30) DAY), -- Дата в последние 30 дней
+            IF(RAND() > 0.9, TRUE, FALSE) -- 10% тем помечены как удаленные
+        );
+        SET i = i + 1;
+    END WHILE;
+
+    -- Обязательные 2 ошибки создания темы без логина
+    INSERT INTO logs (user_id, action, theme_id, status, action_date)
+    VALUES (NULL, 'create_theme', NULL, 'error', NOW());
+    
+    INSERT INTO logs (user_id, action, theme_id, status, action_date)
+    VALUES (NULL, 'create_theme', NULL, 'error', NOW());
+    
+    -- Генерация остальных действий (минимум 5 каждого типа)
+    CALL generate_actions('visit', 5, 6, FALSE); -- Анонимные
+    CALL generate_actions('register', 5, 6, FALSE); -- Анонимные
+    CALL generate_actions('login', 5, 6, TRUE); -- Только авторизованные
+    CALL generate_actions('logout', 5, 6, TRUE); -- Только авторизованные
+    CALL generate_actions('create_theme', 3, 4, TRUE); -- +2 ошибки выше = минимум 5
+    CALL generate_actions('view_theme', 5, 6, TRUE);
+    CALL generate_actions('delete_theme', 5, 6, TRUE);
+    CALL generate_actions('create_message', 5, 6, NULL); -- Смешанные
+END //
+DELIMITER ;
+
+-- Вспомогательная процедура 
+DELIMITER //
+CREATE PROCEDURE generate_actions(
+    IN action_type VARCHAR(20),
+    IN min_count INT,
+    IN rand_add INT,
+    IN needs_auth BOOLEAN
+)
+BEGIN
+    DECLARE i INT DEFAULT 1;
+    DECLARE actions_count INT;
+    DECLARE user_id INT;
+    DECLARE theme_id INT;
+    
+    -- От 5 до 5+6=11 действий каждого типа
+    SET actions_count = min_count + FLOOR(RAND() * rand_add);
+    
+    WHILE i <= actions_count DO
+        -- Определяем user_id в зависимости от типа действия
+        IF needs_auth IS NULL THEN -- Для сообщений
+            SET user_id = IF(RAND() > 0.5, FLOOR(1 + RAND() * 5), NULL);
+        ELSEIF needs_auth THEN
+            SET user_id = FLOOR(1 + RAND() * 5);
+        ELSE
+            SET user_id = NULL;
+        END IF;
+        
+       
+        IF action_type IN ('create_theme', 'view_theme', 'delete_theme') THEN
+            SELECT t.theme_id INTO theme_id FROM themes t 
+            WHERE (action_type != 'delete_theme' OR t.is_deleted = FALSE)
+            ORDER BY RAND() LIMIT 1;
+        ELSE
+            SET theme_id = NULL;
+        END IF;
+        
+        -- Вставляем запись лога (без IP)
+        INSERT INTO logs (user_id, action, theme_id, status, action_date)
+        VALUES (
+            user_id,
+            action_type,
+            theme_id,
+            IF(RAND() > 0.9, 'error', 'success'), -- 10% ошибок
+            DATE_SUB(NOW(), INTERVAL FLOOR(RAND() * 30) DAY) -- Случайная дата
+        );
+        
+        SET i = i + 1;
+    END WHILE;
+END //
+DELIMITER ;
+
+
+call generate_test_data();
+
+python database_qery.py --start 2025-01-01 --end 2025-05-01 --output forum_report.csv
